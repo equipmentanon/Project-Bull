@@ -2,10 +2,11 @@ import streamlit as st
 import pandas as pd
 import math
 import altair as alt
+from finance_utils import generate_amortization_schedule
 
 st.title("Equipment Rental Financial Analysis")
 
-# Full default equipment dataset
+# --- Default Equipment Dataset ---
 default_data = [
     {
         "Equipment Description": "FORKLIFT VARIABLE REACH 5000# 16-20'",
@@ -213,105 +214,131 @@ default_data = [
     }
 ]
 
+# --- Editable Equipment Data ---
 st.subheader("Edit Equipment Data")
-# Editable data table (requires Streamlit v1.18+)
 df = st.data_editor(pd.DataFrame(default_data), num_rows="dynamic")
 
-# Global inputs
+# --- Global Inputs ---
 annual_interest_rate = st.number_input("Enter Annual Interest Rate (%)", value=5.95, step=0.1)
 loan_term = st.number_input("Enter Loan Term (months)", value=60, step=1)
 
-# Define financial functions
-def calculate_pmt(P, annual_rate, term):
-    r = annual_rate / 100 / 12
-    n = term
-    return P * r * (1 + r)**n / ((1 + r)**n - 1)
+# --- Initialize Lists for Aggregated Calculations ---
+aggregated_pmts = []             
+aggregated_debt_services = []      
+aggregated_remaining_balances = [] 
+aggregated_monthly_revenues = []   
+aggregated_rent_profits = []       
+aggregated_salvage_nets = []       
+aggregated_arbitrage_profits = []  
+cumulative_interests = []
+rois = []
 
-def calculate_remaining_balance(P, annual_rate, m, pmt):
-    r = annual_rate / 100 / 12
-    return P * (1 + r)**m - pmt * ((1 + r)**m - 1) / r
+# --- Perform Calculations for Each Equipment Row ---
+for index, row in df.iterrows():
+    cost = row["Cost"]
+    emor = row["EMOR"]
+    quantity = row["Qty"]
+    monthly_rate = row["Month"]
+    salvage_value_per_unit = row["Salvage"]
+    
+    # Calculate monthly payment per unit (PMT)
+    monthly_interest_rate = annual_interest_rate / 100 / 12
+    if monthly_interest_rate != 0:
+        pmt_per_unit = cost * monthly_interest_rate * (1 + monthly_interest_rate)**loan_term / ((1 + monthly_interest_rate)**loan_term - 1)
+    else:
+        pmt_per_unit = cost / loan_term
+    
+    aggregated_pmt = pmt_per_unit * quantity
+    aggregated_pmts.append(aggregated_pmt)
+    
+    total_debt_per_unit = pmt_per_unit * emor
+    aggregated_debt_service = total_debt_per_unit * quantity
+    aggregated_debt_services.append(aggregated_debt_service)
+    
+    # Calculate remaining balance after EMOR months per unit
+    if monthly_interest_rate != 0:
+        remaining_balance_per_unit = cost * (1 + monthly_interest_rate)**emor - pmt_per_unit * ((1 + monthly_interest_rate)**emor - 1) / monthly_interest_rate
+    else:
+        remaining_balance_per_unit = cost - (cost / loan_term) * emor
+    aggregated_remaining_balance = remaining_balance_per_unit * quantity
+    aggregated_remaining_balances.append(aggregated_remaining_balance)
+    
+    monthly_revenue_aggregated = monthly_rate * emor * quantity
+    aggregated_monthly_revenues.append(monthly_revenue_aggregated)
+    
+    rent_profit_aggregated = monthly_revenue_aggregated - aggregated_debt_service
+    aggregated_rent_profits.append(rent_profit_aggregated)
+    
+    aggregated_salvage = salvage_value_per_unit * quantity
+    salvage_net_aggregated = aggregated_salvage - aggregated_remaining_balance
+    aggregated_salvage_nets.append(salvage_net_aggregated)
+    
+    arbitrage_profit_aggregated = rent_profit_aggregated + salvage_net_aggregated
+    aggregated_arbitrage_profits.append(arbitrage_profit_aggregated)
+    
+    # Generate amortization schedule for cumulative interest and ROI
+    schedule_df = generate_amortization_schedule(cost, annual_interest_rate, loan_term, emor, monthly_rate, salvage_value_per_unit)
+    cumulative_interest = schedule_df["Interest"].sum()
+    cumulative_interests.append(cumulative_interest)
+    total_rent = schedule_df["Rental Income"].sum()
+    roi = (total_rent + salvage_value_per_unit - cost) / cost
+    rois.append(roi)
 
-if st.button("Run Analysis"):
-    # Initialize lists for computed metrics
-    aggregated_pmts = []             
-    aggregated_debt_services = []      
-    aggregated_remaining_balances = [] 
-    aggregated_monthly_revenues = []   
-    aggregated_rent_profits = []       
-    aggregated_salvage_nets = []       
-    aggregated_arbitrage_profits = []  
-    
-    # Calculate metrics for each row
-    for index, row in df.iterrows():
-        cost = row["Cost"]
-        emor = row["EMOR"]
-        quantity = row["Qty"]
-        monthly_rate = row["Month"]
-        salvage_value_per_unit = row["Salvage"]
-        
-        pmt_per_unit = calculate_pmt(cost, annual_interest_rate, loan_term)
-        aggregated_pmt = pmt_per_unit * quantity
-        aggregated_pmts.append(aggregated_pmt)
-        
-        total_debt_per_unit = pmt_per_unit * emor
-        aggregated_debt_service = total_debt_per_unit * quantity
-        aggregated_debt_services.append(aggregated_debt_service)
-        
-        remaining_balance_per_unit = calculate_remaining_balance(cost, annual_interest_rate, emor, pmt_per_unit)
-        aggregated_remaining_balance = remaining_balance_per_unit * quantity
-        aggregated_remaining_balances.append(aggregated_remaining_balance)
-        
-        monthly_revenue_aggregated = monthly_rate * emor * quantity
-        aggregated_monthly_revenues.append(monthly_revenue_aggregated)
-        
-        rent_profit_aggregated = monthly_revenue_aggregated - aggregated_debt_service
-        aggregated_rent_profits.append(rent_profit_aggregated)
-        
-        aggregated_salvage = salvage_value_per_unit * quantity
-        salvage_net_aggregated = aggregated_salvage - aggregated_remaining_balance
-        aggregated_salvage_nets.append(salvage_net_aggregated)
-        
-        arbitrage_profit_aggregated = rent_profit_aggregated + salvage_net_aggregated
-        aggregated_arbitrage_profits.append(arbitrage_profit_aggregated)
-    
-    # Add new columns to the DataFrame
-    df["Aggregated PMT"] = aggregated_pmts
-    df["Aggregated Debt Service"] = aggregated_debt_services
-    df["Aggregated Remaining Balance"] = aggregated_remaining_balances
-    df["Aggregated Monthly Revenue"] = aggregated_monthly_revenues
-    df["Aggregated Rent Profit"] = aggregated_rent_profits
-    df["Aggregated Salvage Net"] = aggregated_salvage_nets
-    df["Aggregated Arbitrage Profit"] = aggregated_arbitrage_profits
-    
-    st.subheader("Analysis Results")
-    st.dataframe(df)
-    
-    st.subheader("Suggestions/Observations")
-    for index, row in df.iterrows():
-        equipment = row["Equipment Description"]
-        arbitrage = row["Aggregated Arbitrage Profit"]
-        if arbitrage < 0:
-            st.write(f"- {equipment}: Negative arbitrage profit ({arbitrage:.2f}). Consider adjusting rates or financing terms.")
-        else:
-            st.write(f"- {equipment}: Positive arbitrage profit ({arbitrage:.2f}).")
-    
-    # Create charts using Altair
-    st.subheader("Profitability Charts")
-    
-    # Bar chart for Aggregated Arbitrage Profit
-    chart_data = df[["Equipment Description", "Aggregated Arbitrage Profit"]]
-    chart = alt.Chart(chart_data).mark_bar().encode(
-        x=alt.X("Equipment Description:N", sort=None, title="Equipment"),
-        y=alt.Y("Aggregated Arbitrage Profit:Q", title="Arbitrage Profit"),
-        tooltip=["Equipment Description", "Aggregated Arbitrage Profit"]
-    ).properties(width=700, height=400, title="Arbitrage Profit by Equipment")
-    st.altair_chart(chart, use_container_width=True)
-    
-    # Bar chart for Aggregated Rent Profit
-    rent_chart_data = df[["Equipment Description", "Aggregated Rent Profit"]]
-    rent_chart = alt.Chart(rent_chart_data).mark_bar(color="orange").encode(
-        x=alt.X("Equipment Description:N", sort=None, title="Equipment"),
-        y=alt.Y("Aggregated Rent Profit:Q", title="Rent Profit"),
-        tooltip=["Equipment Description", "Aggregated Rent Profit"]
-    ).properties(width=700, height=400, title="Rent Profit by Equipment")
-    st.altair_chart(rent_chart, use_container_width=True)
+# --- Append Computed Columns to DataFrame ---
+df["Aggregated PMT"] = aggregated_pmts
+df["Aggregated Debt Service"] = aggregated_debt_services
+df["Aggregated Remaining Balance"] = aggregated_remaining_balances
+df["Aggregated Monthly Revenue"] = aggregated_monthly_revenues
+df["Aggregated Rent Profit"] = aggregated_rent_profits
+df["Aggregated Salvage Net"] = aggregated_salvage_nets
+df["Aggregated Arbitrage Profit"] = aggregated_arbitrage_profits
+df["Cumulative Interest"] = cumulative_interests
+df["ROI"] = rois
+
+# --- Display Aggregated Analysis ---
+st.subheader("Aggregated Analysis Results")
+st.dataframe(df)
+
+st.subheader("Suggestions/Observations")
+for index, row in df.iterrows():
+    equipment = row["Equipment Description"]
+    arbitrage = row["Aggregated Arbitrage Profit"]
+    if arbitrage < 0:
+        st.write(f"- {equipment}: Negative arbitrage profit ({arbitrage:.2f}). Consider adjusting rental rate or financing terms.")
+    else:
+        st.write(f"- {equipment}: Positive arbitrage profit ({arbitrage:.2f}).")
+
+# --- Charts ---
+st.subheader("Profitability Charts")
+
+# Altair chart for Aggregated Arbitrage Profit by Equipment
+chart_data = df[["Equipment Description", "Aggregated Arbitrage Profit"]]
+chart = alt.Chart(chart_data).mark_bar().encode(
+    x=alt.X("Equipment Description:N", sort=None, title="Equipment"),
+    y=alt.Y("Aggregated Arbitrage Profit:Q", title="Arbitrage Profit"),
+    tooltip=["Equipment Description", "Aggregated Arbitrage Profit"]
+).properties(width=700, height=400, title="Arbitrage Profit by Equipment")
+st.altair_chart(chart, use_container_width=True)
+
+# Altair chart for Aggregated Rent Profit by Equipment
+rent_chart_data = df[["Equipment Description", "Aggregated Rent Profit"]]
+rent_chart = alt.Chart(rent_chart_data).mark_bar(color="orange").encode(
+    x=alt.X("Equipment Description:N", sort=None, title="Equipment"),
+    y=alt.Y("Aggregated Rent Profit:Q", title="Rent Profit"),
+    tooltip=["Equipment Description", "Aggregated Rent Profit"]
+).properties(width=700, height=400, title="Rent Profit by Equipment")
+st.altair_chart(rent_chart, use_container_width=True)
+
+# --- Amortization Schedules ---
+st.subheader("Amortization Schedules")
+for index, row in df.iterrows():
+    if st.checkbox(f"Show amortization schedule for {row['Equipment Description']}", key=index):
+        schedule_df = generate_amortization_schedule(
+            cost=row["Cost"],
+            annual_rate=annual_interest_rate,
+            loan_term=loan_term,
+            emor=row["EMOR"],
+            monthly_rent=row["Month"],
+            salvage=row["Salvage"]
+        )
+        st.dataframe(schedule_df)
